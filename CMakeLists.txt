@@ -3,4 +3,4 @@ project(ftp_server C)
 
 set(CMAKE_C_STANDARD 11)
 
-add_executable(ftp_server main.c)
+add_executable(server main.c async_util.c async_util.h net_listener.c net_listener.h service_handler.c service_handler.h constants.h)
