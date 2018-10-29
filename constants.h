@@ -6,6 +6,11 @@
 #define FTP_SERVER_CONSTANTS_H
 
 #define PATH_MAX_LEN 4096
+#define MAX_EPOLL_PER 64
+#define HOST_MAX_LEN 4096
+#define SO_MAX_QUEUE 64
+#define CONTROL_BUFFER_LEN 4096
+#define DATA_BUFFER_LEN 8192
 
 enum log_level_t {
     LOG_NONE,
@@ -14,5 +19,13 @@ enum log_level_t {
     LOG_INFO,
     LOG_DEBUG
 };
+
+typedef void(*epoll_callback_t)(void *receiver, int events);
+
+typedef struct epoll_payload_t {
+    epoll_callback_t callback;
+    void *receiver;
+} epoll_payload_t;
+
 
 #endif //FTP_SERVER_CONSTANTS_H

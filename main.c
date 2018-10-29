@@ -37,19 +37,23 @@ void parse_arguments(int argc, char *argv[]) {
     util_config.root_len = strlen(root);
     if (util_config.root_len >= PATH_MAX_LEN) {
         if (util_config.log_level >= LOG_ERR) {
-            fprintf(stderr, "E: root path too long\n");
+            fprintf(stderr, "root path too long\n");
         }
         exit(-1);
     }
     if (util_config.root_len > 0 && root[util_config.root_len - 1] == '/') {
         root[--util_config.root_len] = '\0'; // ensure that root do not end with /
     }
-    strcpy(util_config.root, root);
-
+    util_config.root = root;
     util_config.port = port;
 }
 
 int main(int argc, char *argv[]) {
     parse_arguments(argc, argv);
+    if (start_up() == -1) {
+        return -1;
+    }
+    main_loop();
+    tear_down();
     return 0;
 }
