@@ -28,7 +28,6 @@ int net_listener_start() {
         if (util_config.log_level >= LOG_ERR) {
             fprintf(stderr, "getaddrinfo %s\n", gai_strerror(ret));
         }
-        freeaddrinfo(head);
         return -1;
     }
 
@@ -129,7 +128,7 @@ void listener_remove(net_listener_t *listener) {
     }
     listener->prev->next = listener->next;
     listener->next->prev = listener->prev;
-    free(listener);
+    add_free_list(listener);
     util_config.wait_size--;
     if (util_config.log_level >= LOG_DEBUG) {
         printf("close listener\n");

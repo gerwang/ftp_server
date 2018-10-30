@@ -5,7 +5,7 @@
 #ifndef FTP_SERVER_NET_LISTENER_H
 #define FTP_SERVER_NET_LISTENER_H
 
-#include <netinet/in.h>
+#include <netdb.h>
 #include "constants.h"
 
 typedef struct net_listener_t {

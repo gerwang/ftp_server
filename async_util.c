@@ -7,11 +7,13 @@
 #include <stdio.h>
 #include <memory.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 
 util_config_t util_config;
 
 int util_start() {
+    util_config.free_head.next = NULL;
     util_config.wait_size = 0;
     util_config.ep_fd = epoll_create1(0);
     if (util_config.ep_fd == -1) {
@@ -40,7 +42,7 @@ int start_up() {
 }
 
 int main_loop() {
-    static struct epoll_event buffer[MAX_EPOLL_PER];
+    static struct epoll_event buffer[MAX_EPOLL_PER]; // in fact, bug here
     while (util_config.wait_size > 0) {
         int fd_num = epoll_wait(util_config.ep_fd, buffer, MAX_EPOLL_PER, -1); // wait forever
         if (fd_num == -1) {
@@ -55,6 +57,7 @@ int main_loop() {
                 payload->callback(payload->receiver, buffer[i].events);
             }
         }
+        clear_free_list();
     }
     return 0;
 }
@@ -63,6 +66,10 @@ void tear_down() {
     service_remove_all();
     listener_remove_all();
     util_remove();
+    clear_free_list();
+    if (util_config.log_level >= LOG_DEBUG) {
+        printf("tear down, wait size is %d\n", util_config.wait_size);
+    }
 }
 
 int push_dir(char *tmp, int tmp_len, const char *dir, int dir_len) {
@@ -95,7 +102,10 @@ int pop_dir(char *tmp, int tmp_len) {
 // wd must start with /
 // path's .. and . will be normalized
 // if wd is root. then /, else wd will not end with /
-int join_path(const char *root, int root_len, const char *wd, int wd_len, const char *path, int path_len, char *res) {
+int join_path(const char *root, int root_len,
+              const char *wd, int wd_len,
+              const char *path, int path_len, char *res) {
+
     static char tmp[PATH_MAX_LEN];
     memcpy(tmp, root, (size_t) root_len);
     int tmp_len = root_len;
@@ -130,4 +140,27 @@ int join_path(const char *root, int root_len, const char *wd, int wd_len, const 
     tmp[tmp_len] = '\0';
     strcpy(res, tmp);
     return tmp_len;
+}
+
+void add_free_list(void *payload) {
+    free_queue_t *node = malloc(sizeof(free_queue_t));
+    if (node == NULL) {
+        if (util_config.log_level >= LOG_ERR) {
+            fprintf(stderr, "malloc(free_queue_t)\n");
+        }
+        free(payload); // desperately, free the node immediately
+    } else {
+        node->payload = payload;
+        node->next = util_config.free_head.next;
+        util_config.free_head.next = node;
+    }
+}
+
+void clear_free_list() {
+    while (util_config.free_head.next != NULL) {
+        free_queue_t *node = util_config.free_head.next;
+        util_config.free_head.next = node->next;
+        free(node->payload);
+        free(node);
+    }
 }

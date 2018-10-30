@@ -19,7 +19,6 @@
 void service_start() {
     bzero(&util_config.service_head, sizeof(util_config.service_head));
     util_config.service_head.prev = util_config.service_head.next = &util_config.service_head;
-    util_config.service_head.control_fd = -1;
 }
 
 void service_add(int fd, struct sockaddr *addr, int addr_len) {
@@ -82,6 +81,8 @@ void service_add(int fd, struct sockaddr *addr, int addr_len) {
     handler->root_len = util_config.root_len;
     handler->wd_len = path_len - handler->root_len;
 
+    handler->command_type = DT_NONE;
+
     handler->next = util_config.service_head.next;
     util_config.service_head.next = handler;
     handler->prev = &util_config.service_head;
@@ -93,13 +94,16 @@ void service_remove(service_handler_t *handler) {
     if (handler->control_fd != -1) {
 
         data_clear_connection(handler);
+
         close(handler->control_fd);
+        handler->control_fd = -1;
+
         util_config.wait_size--;
 
         handler->prev->next = handler->next;
         handler->next->prev = handler->prev;
 
-        handler->control_fd = -1;
+        add_free_list(handler);
     }
 }
 
@@ -165,8 +169,8 @@ void type_handle(service_handler_t *handler, char *parameter) {
 void port_handle(service_handler_t *handler, char *parameter) {
     data_clear_connection(handler);
     struct sockaddr_in *addr_in = &handler->port_addr;
-    const char *host = (const char *) &addr_in->sin_addr.s_addr, *port = (const char *) &addr_in->sin_port;
-    if (sscanf("%hhu,%hhu,%hhu,%hhu,%hhu,%hhu",
+    unsigned char *host = (unsigned char *) &addr_in->sin_addr.s_addr, *port = (unsigned char *) &addr_in->sin_port;
+    if (sscanf(parameter, "%hhu,%hhu,%hhu,%hhu,%hhu,%hhu", // prev bug: no parameter // NOLINT
                host, host + 1, host + 2, host + 3, port, port + 1) != 6) { // big endian order
         service_write_line(handler, "500 Not a valid socket address");
     } else {
@@ -245,22 +249,34 @@ void data_start_transfer(service_handler_t *handler) {
         }
         handler->local_fd = handler->remote_fd = -1;
         struct epoll_event event;
-        event.events = EPOLLIN | EPOLLET;
-        event.data.ptr = &handler->data_in_payload;
 
         int ok = 1;
-        if (epoll_ctl(util_config.ep_fd, EPOLL_CTL_ADD, handler->data_in_fd, &event) == -1) {
-            if (util_config.log_level >= LOG_ERR) {
-                perror("epoll add in");
+        if (handler->command_type == DT_RETR) {
+            handler->data_flag |= EPOLLIN;
+        } else {
+            event.events = EPOLLIN | EPOLLET;
+            event.data.ptr = &handler->data_in_payload;
+            if (epoll_ctl(util_config.ep_fd, EPOLL_CTL_ADD, handler->data_in_fd, &event) == -1) {
+                if (util_config.log_level >= LOG_ERR) {
+                    perror("epoll add in");
+                }
+                ok = 0;
             }
-            ok = 0;
         }
-        if (ok && epoll_ctl(util_config.ep_fd, EPOLL_CTL_ADD, handler->data_out_fd, &event) == -1) {
-            if (util_config.log_level >= LOG_ERR) {
-                perror("epoll add out");
+
+        if (handler->command_type == DT_STOR) { // regular file
+            handler->data_flag |= EPOLLOUT;
+        } else {
+            event.events = EPOLLOUT | EPOLLET; // prev bug: ftl
+            event.data.ptr = &handler->data_out_payload;
+            if (ok && epoll_ctl(util_config.ep_fd, EPOLL_CTL_ADD, handler->data_out_fd, &event) == -1) {
+                if (util_config.log_level >= LOG_ERR) {
+                    perror("epoll add out");
+                }
+                ok = 0;
             }
-            ok = 0;
         }
+
         if (ok) {
             if (handler->command_type == DT_LIST) {
                 service_write_line(handler, "150 Opening BINARY mode data connection for '/bin/ls'.");
@@ -295,7 +311,6 @@ void list_handle(service_handler_t *handler, char *parameter) {
     }
 
     // prevent attack like "ls: cannot access '/my/secret/directory/name/ftp/root': No such file or directory"
-    struct stat s;
     int ok = 1;
     if (access(handler->path, F_OK | R_OK) == -1) {
         ok = 0;
@@ -329,13 +344,14 @@ void list_handle(service_handler_t *handler, char *parameter) {
                 close(pipes[0]);
                 ok = 0;
             }
-            if (ok) {
-                handler->local_fd = pipes[0];
-                data_start_transfer(handler);
-            }
         }
     }
-    if (!ok) {
+    if (ok) {
+        handler->local_fd = pipes[0];
+        handler->command_type = DT_LIST;
+        handler->transfer_flag = 1;
+        data_start_transfer(handler);
+    } else {
         service_write_line(handler, "426 Temporarily unavailable.");
     }
 }
@@ -353,7 +369,7 @@ void pasv_handle(service_handler_t *handler, char *parameter) {
     struct sockaddr_in temp = handler->local_addr;
     socklen_t temp_len = (socklen_t) handler->local_addr_len;
     temp.sin_port = 0; // any port
-    if (ok && bind(fd, (const struct sockaddr *) &handler->local_addr, temp_len) == -1) {
+    if (ok && bind(fd, (const struct sockaddr *) &temp, temp_len) == -1) { // prev bug: local_addr
         if (util_config.log_level >= LOG_ERR) {
             perror("PASV bind");
         }
@@ -377,7 +393,7 @@ void pasv_handle(service_handler_t *handler, char *parameter) {
     struct epoll_event event;
     event.events = EPOLLIN | EPOLLET;
     event.data.ptr = &handler->pasv_payload;
-    if (epoll_ctl(util_config.ep_fd, EPOLL_CTL_ADD, fd, &event) == -1) {
+    if (ok && epoll_ctl(util_config.ep_fd, EPOLL_CTL_ADD, fd, &event) == -1) { // prev bug: no ok
         if (util_config.log_level >= LOG_ERR) {
             perror("epoll add PASV");
         }
@@ -387,9 +403,9 @@ void pasv_handle(service_handler_t *handler, char *parameter) {
     static char pasv_buffer[PASV_MAX_LEN];
     if (ok) {
         handler->pasv_listen_fd = fd;
-        const char *host = (const char *) &temp.sin_addr, *port = (const char *) &temp.sin_port;
+        const unsigned char *host = (const unsigned char *) &temp.sin_addr, *port = (const unsigned char *) &temp.sin_port;
         if (sprintf(pasv_buffer, "227 Entering PASSIVE mode (%hhu,%hhu,%hhu,%hhu,%hhu,%hhu)",
-                    host[0], host[1], host[2], host[3], port[0], port[1]) != 6) {
+                    host[0], host[1], host[2], host[3], port[0], port[1]) < 0) {
             ok = 0;
         }
     }
@@ -467,8 +483,8 @@ void retr_handle(service_handler_t *handler, char *parameter) {
     }
     if (ok) {
         handler->local_fd = fd;
-        handler->data_flag |= EPOLLIN;
         handler->command_type = DT_RETR;
+        handler->transfer_flag = 1;
         data_start_transfer(handler);
     } else {
         service_write_line(handler, "451 Retrieve file failed.");
@@ -495,8 +511,8 @@ void stor_handle(service_handler_t *handler, char *parameter) {
     }
     if (ok) {
         handler->local_fd = fd;
-        handler->data_flag |= EPOLLOUT;
         handler->command_type = DT_STOR;
+        handler->transfer_flag = 1;
         data_start_transfer(handler);
     } else {
         service_write_line(handler, "451 Store file failed.");
@@ -671,6 +687,8 @@ void data_update(service_handler_t *handler) {
                     handler->data_out_fd = -1;
                 }
             }
+        } else {
+            break; // prev bug: ftl
         }
     }
     if (!error_flag && handler->data_in_fd == -1 && handler->data_out_fd == -1) { // transfer end
@@ -697,7 +715,7 @@ void data_in_callback(void *receiver, int events) {
         handler->data_flag |= EPOLLIN;
         data_update(handler);
     }
-    if (handler->transfer_flag && handler->data_in_fd != -1 && events & EPOLLERR) { // todo'
+    if (handler->transfer_flag && handler->data_in_fd != -1 && events & EPOLLERR) {
         data_abort_connection(handler, "426 Input stream error.");
     }
 }
@@ -722,8 +740,12 @@ void pasv_listen_callback(void *receiver, int events) {
                 if (util_config.log_level >= LOG_ERR) {
                     perror("pasv accept");
                 }
-                close(handler->pasv_listen_fd);
-                handler->pasv_listen_fd = -1;
+                if (handler->transfer_flag) {
+                    data_abort_connection(handler, "426 PASV listen error.");
+                } else {
+                    close(handler->pasv_listen_fd);
+                    handler->pasv_listen_fd = -1;
+                }
             }
         } else {
             int flags = fcntl(fd, F_GETFL, 0);
@@ -741,8 +763,12 @@ void pasv_listen_callback(void *receiver, int events) {
         }
     }
     if (events & (EPOLLERR | EPOLLHUP)) {
-        close(handler->pasv_listen_fd);
-        handler->pasv_listen_fd = -1;
+        if (handler->transfer_flag) {
+            data_abort_connection(handler, "426 PASV listen error.");
+        } else {
+            close(handler->pasv_listen_fd);
+            handler->pasv_listen_fd = -1;
+        }
     }
 }
 

@@ -5,11 +5,14 @@
 #ifndef FTP_SERVER_ASYNC_UTIL_H
 #define FTP_SERVER_ASYNC_UTIL_H
 
-
-#include <lzma.h>
 #include "constants.h"
 #include "net_listener.h"
 #include "service_handler.h"
+
+typedef struct free_queue_t {
+    void *payload;
+    struct free_queue_t *next;
+} free_queue_t;
 
 typedef struct util_config_t {
     int wait_size;
@@ -21,6 +24,7 @@ typedef struct util_config_t {
 
     net_listener_t listener_head;
     service_handler_t service_head;
+    struct free_queue_t free_head;
 
     enum log_level_t log_level;
 } util_config_t;
@@ -34,6 +38,12 @@ int main_loop();
 
 void tear_down();
 
-int join_path(const char *root, int root_len, const char *wd, int wd_len, const char *path, int path_len, char *res);
+void add_free_list(void *payload);
+
+void clear_free_list();
+
+int join_path(const char *root, int root_len,
+              const char *wd, int wd_len,
+              const char *path, int path_len, char *res);
 
 #endif //FTP_SERVER_ASYNC_UTIL_H
