@@ -63,7 +63,7 @@ typedef struct service_command_t {
 
 void service_write_line(service_handler_t *handler, const char *line);
 
-void service_add(int fd, struct sockaddr *addr, int addr_len);
+void service_add(int fd);
 
 void service_remove(service_handler_t *handler);
 

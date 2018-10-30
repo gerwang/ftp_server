@@ -21,7 +21,7 @@ void service_start() {
     util_config.service_head.prev = util_config.service_head.next = &util_config.service_head;
 }
 
-void service_add(int fd, struct sockaddr *addr, int addr_len) {
+void service_add(int fd) {
     // have fd
     service_handler_t *handler = malloc(sizeof(service_handler_t));
     if (handler == NULL) {
@@ -46,8 +46,15 @@ void service_add(int fd, struct sockaddr *addr, int addr_len) {
         return;
     }
 
-    handler->local_addr = *(struct sockaddr_in *) addr;
-    handler->local_addr_len = addr_len;
+    handler->local_addr_len = sizeof(handler->local_addr); // prev bug: ftl
+    if (getsockname(fd, (struct sockaddr *) &handler->local_addr, (socklen_t *) &handler->local_addr_len) == -1) {
+        if (util_config.log_level >= LOG_ERR) {
+            perror("getsockname add service");
+        }
+        free(handler);
+        close(fd);
+        return;
+    }
 
     handler->control_payload.callback = control_callback;
     handler->control_payload.receiver = handler;
@@ -662,7 +669,7 @@ void control_update(service_handler_t *handler) {
     }
     handler->entered = 1;
     while (handler->control_fd != -1) {
-        if (handler->control_flag & EPOLLIN && handler->write_buffer_len == 0) { // can read
+        if (handler->control_flag & EPOLLIN && handler->write_buffer_len == 0 && !handler->transfer_flag) { // can read
             ssize_t ret = read(handler->control_fd, handler->control_read_buffer,
                                CONTROL_BUFFER_LEN - handler->read_buffer_len);
             if (ret == -1) {

@@ -138,10 +138,8 @@ void listener_remove(net_listener_t *listener) {
 void accept_callback(void *receiver, int events) {
     net_listener_t *listener = receiver;
     if (events & EPOLLIN) {
-        struct sockaddr addr;
-        socklen_t addr_len;
         while (1) {
-            int handler_fd = accept(listener->server_fd, &addr, &addr_len);
+            int handler_fd = accept(listener->server_fd, NULL, NULL);
             if (handler_fd == -1) {
                 if (errno != EAGAIN && errno != EWOULDBLOCK) {
                     if (util_config.log_level >= LOG_WARN) {
@@ -159,7 +157,7 @@ void accept_callback(void *receiver, int events) {
             if (util_config.log_level >= LOG_DEBUG) {
                 printf("new incoming!\n");
             }
-            service_add(handler_fd, &addr, addr_len);
+            service_add(handler_fd);
         }
     }
     if (events & (EPOLLERR | EPOLLHUP)) {
