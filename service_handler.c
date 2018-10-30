@@ -66,6 +66,11 @@ void service_add(int fd) {
     handler->pasv_payload.receiver = handler;
 
     handler->control_fd = fd;
+    handler->data_in_fd = -1; // prev bug: fd should be initialize with -1, not 0
+    handler->data_out_fd = -1;
+    handler->pasv_listen_fd = -1;
+    handler->remote_fd = -1;
+    handler->local_fd = -1;
 
     handler->write_buffer_len = 0;
     handler->read_buffer_len = 0;
@@ -115,6 +120,10 @@ void service_remove(service_handler_t *handler) {
         handler->next->prev = handler->prev;
 
         add_free_list(handler);
+
+        if (util_config.log_level >= LOG_DEBUG) {
+            printf("remove client\n");
+        }
     }
 }
 
