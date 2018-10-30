@@ -34,4 +34,6 @@ int main_loop();
 
 void tear_down();
 
+int join_path(const char *root, int root_len, const char *wd, int wd_len, const char *path, int path_len, char *res);
+
 #endif //FTP_SERVER_ASYNC_UTIL_H

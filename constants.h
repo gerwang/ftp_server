@@ -11,6 +11,9 @@
 #define SO_MAX_QUEUE 64
 #define CONTROL_BUFFER_LEN 4096
 #define DATA_BUFFER_LEN 8192
+#define PWD_MAX_LEN 8192
+#define ARG_MAX_LEN 20
+#define PASV_MAX_LEN 200
 
 enum log_level_t {
     LOG_NONE,

@@ -21,6 +21,8 @@ typedef struct net_listener_t {
 
 int net_listener_start();
 
+void listener_remove_all();
+
 void accept_callback(void *receiver, int events);
 
 #endif //FTP_SERVER_NET_LISTENER_H

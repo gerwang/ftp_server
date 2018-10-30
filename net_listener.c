@@ -92,7 +92,7 @@ int net_listener_start() {
         }
 
         struct epoll_event event;
-        event.events = EPOLLIN | EPOLLET;
+        event.events = EPOLLIN | EPOLLET | EPOLLET;
         event.data.ptr = &listener->accept_event;
         if (epoll_ctl(util_config.ep_fd, EPOLL_CTL_ADD, listener->server_fd, &event) == -1) {
             perror("epoll_ctl(add listener)");
