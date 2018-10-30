@@ -376,7 +376,7 @@ void list_handle(service_handler_t *handler, char *parameter) {
         handler->transfer_flag = 1;
         data_start_transfer(handler);
     } else {
-        service_write_line(handler, "426 Temporarily unavailable.");
+        service_write_line(handler, "426 No such file or directory.");
     }
 }
 
