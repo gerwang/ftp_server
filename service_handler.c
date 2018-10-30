@@ -223,7 +223,7 @@ void cwd_handle(service_handler_t *handler, char *parameter) {
     if (ok && !S_ISDIR(res.st_mode)) {
         ok = 0;
     }
-    if (ok && !access(cwd_buffer, R_OK) == -1) {
+    if (ok && (access(cwd_buffer, R_OK) == -1)) {
         ok = 0;
     }
     if (ok) {
