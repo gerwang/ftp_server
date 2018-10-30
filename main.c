@@ -2,6 +2,7 @@
 #include <getopt.h>
 #include <stdlib.h>
 #include <memory.h>
+#include <unistd.h>
 #include "async_util.h"
 
 void parse_arguments(int argc, char *argv[]) {
@@ -44,7 +45,27 @@ void parse_arguments(int argc, char *argv[]) {
     if (util_config.root_len > 0 && root[util_config.root_len - 1] == '/') {
         root[--util_config.root_len] = '\0'; // ensure that root do not end with /
     }
-    util_config.root = root;
+    char cwd[PATH_MAX_LEN];
+    if (getcwd(cwd, PATH_MAX_LEN) == NULL) {
+        if (util_config.log_level >= LOG_ERR) {
+            perror("getcwd");
+        }
+        exit(-1);
+    }
+    int root_len = (int) strlen(root);
+    int cwd_len = (int) strlen(cwd);
+    util_config.root_len = (size_t) join_path("", 0,
+                                              cwd, cwd_len,
+                                              root, root_len, util_config.root);
+    if (util_config.root_len == -1) {
+        if (util_config.log_level >= LOG_ERR) {
+            fprintf(stderr, "get root dir fail\n");
+        }
+        exit(-1);
+    }
+    if (util_config.log_level >= LOG_DEBUG) {
+        printf("root is set to %s\n", util_config.root);
+    }
     util_config.port = port;
 }
 

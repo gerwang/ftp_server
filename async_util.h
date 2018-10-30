@@ -18,7 +18,7 @@ typedef struct util_config_t {
     int wait_size;
     int ep_fd;
 
-    char *root;
+    char root[PATH_MAX_LEN];
     size_t root_len;
     char *port;
 
@@ -41,6 +41,8 @@ void tear_down();
 void add_free_list(void *payload);
 
 void clear_free_list();
+
+int pop_dir(char *tmp, int tmp_len);
 
 int join_path(const char *root, int root_len,
               const char *wd, int wd_len,

@@ -74,6 +74,8 @@ void service_add(int fd, struct sockaddr *addr, int addr_len) {
     handler->logged_in = 0;
     handler->port_len = 0;
 
+    handler->rename_len = 0;
+
     util_config.wait_size++;
 
     int path_len = join_path(util_config.root, (int) util_config.root_len,
@@ -82,6 +84,8 @@ void service_add(int fd, struct sockaddr *addr, int addr_len) {
     handler->wd_len = path_len - handler->root_len;
 
     handler->command_type = DT_NONE;
+
+    handler->start_position = 0;
 
     handler->next = util_config.service_head.next;
     util_config.service_head.next = handler;
@@ -182,7 +186,7 @@ void port_handle(service_handler_t *handler, char *parameter) {
 
 void pwd_handle(service_handler_t *handler, char *parameter) {
     static char pwd_buffer[PWD_MAX_LEN];
-    sprintf(pwd_buffer, "257 \"%s\" is the current directory.", handler->path + handler->root_len);
+    snprintf(pwd_buffer, PWD_MAX_LEN, "257 \"%s\" is the current directory.", handler->path + handler->root_len);
     service_write_line(handler, pwd_buffer);
 }
 
@@ -253,6 +257,16 @@ void data_start_transfer(service_handler_t *handler) {
         int ok = 1;
         if (handler->command_type == DT_RETR) {
             handler->data_flag |= EPOLLIN;
+            if (handler->start_position != 0) {
+                __off_t ret = lseek(handler->data_in_fd, handler->start_position, SEEK_SET);
+                handler->start_position = 0;
+                if (ret == -1) {
+                    if (util_config.log_level >= LOG_DEBUG) {
+                        perror("lseek");
+                    }
+                    ok = 0;
+                }
+            }
         } else {
             event.events = EPOLLIN | EPOLLET;
             event.data.ptr = &handler->data_in_payload;
@@ -266,6 +280,16 @@ void data_start_transfer(service_handler_t *handler) {
 
         if (handler->command_type == DT_STOR) { // regular file
             handler->data_flag |= EPOLLOUT;
+            if (handler->start_position != 0) {
+                __off_t ret = lseek(handler->data_out_fd, handler->start_position, SEEK_SET);
+                handler->start_position = 0;
+                if (ret == -1) {
+                    if (util_config.log_level >= LOG_DEBUG) {
+                        perror("lseek");
+                    }
+                    ok = 0;
+                }
+            }
         } else {
             event.events = EPOLLOUT | EPOLLET; // prev bug: ftl
             event.data.ptr = &handler->data_out_payload;
@@ -404,8 +428,8 @@ void pasv_handle(service_handler_t *handler, char *parameter) {
     if (ok) {
         handler->pasv_listen_fd = fd;
         const unsigned char *host = (const unsigned char *) &temp.sin_addr, *port = (const unsigned char *) &temp.sin_port;
-        if (sprintf(pasv_buffer, "227 Entering PASSIVE mode (%hhu,%hhu,%hhu,%hhu,%hhu,%hhu)",
-                    host[0], host[1], host[2], host[3], port[0], port[1]) < 0) {
+        if (snprintf(pasv_buffer, PASV_MAX_LEN, "227 Entering PASSIVE mode (%hhu,%hhu,%hhu,%hhu,%hhu,%hhu)",
+                     host[0], host[1], host[2], host[3], port[0], port[1]) < 0) {
             ok = 0;
         }
     }
@@ -519,6 +543,74 @@ void stor_handle(service_handler_t *handler, char *parameter) {
     }
 }
 
+void rnfr_handle(service_handler_t *handler, char *parameter) {
+    static char rnfr_buffer[PWD_MAX_LEN];
+    int len = (int) strlen(parameter);
+    int path_len = join_path(handler->path, (int) handler->root_len,
+                             handler->path + handler->root_len, (int) handler->wd_len,
+                             parameter, len, rnfr_buffer);
+    int ok = 1;
+    if (path_len == -1) {
+        ok = 0;
+    }
+    if (access(rnfr_buffer, F_OK) == -1) {
+        ok = 0;
+    }
+    if (ok) {
+        strcpy(handler->rename_path, rnfr_buffer);
+        handler->rename_len = (size_t) path_len;
+        service_write_line(handler, "350 File exists, ready for destination name.");
+    } else {
+        service_write_line(handler, "550 No such file or directory.");
+    }
+}
+
+void rnto_handle(service_handler_t *handler, char *parameter) {
+    static char rnto_buffer[PWD_MAX_LEN];
+    int len = (int) strlen(parameter);
+    if (handler->rename_len == 0) {
+        service_write_line(handler, "503 Bad sequence of commands, use RNFR first.");
+        return;
+    }
+    strcpy(rnto_buffer, handler->rename_path);
+    int rnto_len = (int) (handler->root_len +
+                          pop_dir(rnto_buffer + handler->root_len, (int) (handler->rename_len - handler->root_len)));
+    int ok = 1;
+    rnto_len = join_path(rnto_buffer, (int) handler->root_len,
+                         rnto_buffer + handler->root_len, (int) (rnto_len - handler->root_len),
+                         parameter, len, rnto_buffer);
+    if (rnto_len == -1) {
+        ok = 0;
+    }
+    if (ok && rename(handler->rename_path, rnto_buffer) == -1) {
+        ok = 0;
+    }
+    if (ok) {
+        service_write_line(handler, "250 RNTO command successful.");
+    } else {
+        service_write_line(handler, "550 RNTO command failed.");
+    }
+    handler->rename_len = 0; // used
+}
+
+void rest_handle(service_handler_t *handler, char *parameter) {
+    int ok = 1;
+    unsigned offset;
+    if (sscanf(parameter, "%u", &offset) != 1) { // NOLINT
+        ok = 0;
+    }
+    static char rest_buffer[PASV_MAX_LEN];
+    if (ok && snprintf(rest_buffer, PASV_MAX_LEN, "350 Restarting at %u. Waiting to initiate transfer.", offset) < 0) {
+        ok = 0;
+    }
+    if (ok) {
+        handler->start_position = offset;
+        service_write_line(handler, rest_buffer);
+    } else {
+        service_write_line(handler, "503 Bad REST parameter.");
+    }
+}
+
 service_command_t supported_commands[] = {
         {"USER", user_handle, 0},
         {"PASS", pass_handle, 0},
@@ -534,9 +626,9 @@ service_command_t supported_commands[] = {
         {"PWD",  pwd_handle,  1},
         {"LIST", list_handle, 1},
         {"RMD",  rmd_handle,  1},
-        {"RNFR", NULL,        1},
-        {"RNTO", NULL,        1},
-        {"REST", NULL,        1}
+        {"RNFR", rnfr_handle, 1},
+        {"RNTO", rnto_handle, 1},
+        {"REST", rest_handle, 1}
 };
 
 void handle_command(service_handler_t *handler, const char *command) {

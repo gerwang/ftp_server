@@ -16,6 +16,9 @@ typedef struct service_handler_t {
     char path[PATH_MAX_LEN];
     size_t root_len, wd_len;
 
+    char rename_path[PATH_MAX_LEN];
+    size_t rename_len;
+
     int control_fd;
     int control_flag;
 
@@ -44,6 +47,8 @@ typedef struct service_handler_t {
     int local_addr_len;
 
     enum data_type command_type;
+
+    int start_position;
 
     struct service_handler_t *prev, *next;
 } service_handler_t;
